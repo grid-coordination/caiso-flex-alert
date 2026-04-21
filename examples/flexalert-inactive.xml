@@ -1,0 +1,8 @@
+<ActiveFlexAlertEventsDTO
+    xmlns:i="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns="http://schemas.datacontract.org/2004/07/Caiso.TodaysOutlook.Common.DTO">
+  <Active />
+  <Future />
+  <IsFlexAlertActive>false</IsFlexAlertActive>
+  <UpdatedOn>04-21-2026 15:44:23</UpdatedOn>
+</ActiveFlexAlertEventsDTO>

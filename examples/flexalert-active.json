@@ -1,0 +1,29 @@
+{
+  "IsFlexAlertActive": true,
+  "UpdatedOn": "06-11-2021 09:05:29",
+  "Active": [
+    {
+      "ID": 6,
+      "Title": "Flex alert for 06/11/2021",
+      "StartDate": "06-11-2021 09:00",
+      "EndDate": "06-11-2021 21:00",
+      "Region": "Northern California;VEA Region"
+    }
+  ],
+  "Future": [
+    {
+      "ID": 1,
+      "Title": "Flex alert for 06/14/2021",
+      "StartDate": "06-14-2021 16:00",
+      "EndDate": "06-14-2021 21:00",
+      "Region": "Statewide"
+    },
+    {
+      "ID": 2,
+      "Title": "Flex alert for 06/15/2021",
+      "StartDate": "06-15-2021 15:00",
+      "EndDate": "06-15-2021 21:00",
+      "Region": "Southern California"
+    }
+  ]
+}
