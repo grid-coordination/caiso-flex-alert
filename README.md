@@ -2,7 +2,7 @@
 
 ## Overview
 
-The California Independent System Operator (CAISO) issues **Flex Alerts** — voluntary conservation calls asking electricity consumers to reduce usage during periods when the grid is under stress (typically hot summer afternoons/evenings when demand peaks and supply is tight).
+The [California Independent System Operator (CAISO)](https://www.caiso.com) issues **[Flex Alerts](https://www.flexalert.org)** — voluntary conservation calls asking electricity consumers to reduce usage during periods when the grid is under stress (typically hot summer afternoons/evenings when demand peaks and supply is tight). See [What is a Flex Alert?](https://www.flexalert.org/what-is-flex-alert) for background.
 
 CAISO provides machine-readable endpoints to check the current Flex Alert status. This document describes the known APIs, their response formats, and how to parse them.
 
