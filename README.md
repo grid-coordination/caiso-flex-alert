@@ -224,7 +224,7 @@ Below are the key challenges, particularly for anyone trying to determine whethe
 
 The most significant limitation is that **CAISO does not define the geographic boundaries of its regions**. The region names ("Northern CA Region", "Southern CA Region", etc.) are informal labels that roughly correspond to investor-owned utility (IOU) service territories, but CAISO has confirmed they maintain no zip-code-to-region mapping, no GIS boundary data, and no formal definition of what "Northern" vs. "Southern" California means in this context.
 
-This makes it impossible to reliably answer "does this Flex Alert apply to my address?" without making assumptions. A consumer in a municipal utility district (e.g., LADWP, SMUD, SVP) that overlaps geographically with a CAISO region but is not part of CAISO's balancing area has no way to know from this data whether the alert is relevant to them.
+This makes it impossible to reliably answer "does this Flex Alert apply to my address?" without making assumptions. Consumers served by publicly-owned utilities (POUs) like CPAU, SMUD, or SVP are geographically within IOU regions and physically interconnected with the CAISO-managed grid — they use IOU transmission infrastructure and benefit from conservation during grid stress — but the API provides no way to determine which region they fall in.
 
 In practice, CAISO's own notification system sidesteps this problem entirely: when a Flex Alert is issued, **all subscribers are notified regardless of region**, even for regional alerts. The region field is effectively advisory.
 

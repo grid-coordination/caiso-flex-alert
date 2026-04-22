@@ -135,23 +135,87 @@ Flex Alerts are generally issued **day-ahead** (the day before). EEA Watch may b
 
 The developer portal at `developer.caiso.com` provides access to OASIS and market data APIs. As of April 2026, it contains **no Flex Alert data, no region definitions, and no GIS data**. The Flex Alert endpoint is part of the separate Today's Outlook API suite and requires no developer account.
 
-## Potential GIS data sources to investigate
+## CEC Electric Load Serving Entities Feature Service
+
+**This is the key dataset.** The California Energy Commission publishes polygon boundaries for all California IOUs and POUs as an ArcGIS Feature Service with full GeoJSON export support.
+
+**Feature Service URL:**
+```
+https://services3.arcgis.com/bWPjFyq029ChCGur/arcgis/rest/services/ElectricLoadServingEntities_IOU_POU/FeatureServer/0
+```
+
+**Query all IOUs as GeoJSON:**
+```bash
+curl -s 'https://services3.arcgis.com/bWPjFyq029ChCGur/arcgis/rest/services/ElectricLoadServingEntities_IOU_POU/FeatureServer/0/query?where=Type=%27IOU%27&outFields=Acronym,Utility,Type,HIFLD_ID&returnGeometry=true&outSR=4326&f=geojson'
+```
+
+### IOUs in the dataset
+
+| Acronym | Utility | HIFLD ID | Flex Alert Region (approximate) |
+|---|---|---|---|
+| PG&E | Pacific Gas & Electric Company | 14328 | Northern CA Region |
+| SCE | Southern California Edison | 17609 | Southern CA Region |
+| SDG&E | San Diego Gas & Electric | 16609 | Southern CA Region |
+| BVES | Bear Valley Electric Service | 17612 | ? |
+| — | Liberty Utilities | 57483 | ? |
+| — | PacifiCorp | 14354 | ? |
+
+PG&E polygon alone has 122,334 coordinate points — very detailed boundary data.
+
+### POUs in the dataset (47 total)
+
+Includes all the municipal utilities and co-ops that are **not** in the CAISO balancing area (or are in the BAA but not IOU customers): LADWP, SMUD, SVP, TID, MID, IID, Burbank, Glendale, Pasadena, Anaheim, Riverside, etc.
+
+### Key fields
+
+| Field | Description |
+|---|---|
+| `Acronym` | Short name (PG&E, SCE, SDG&E, etc.) |
+| `Utility` | Full utility name |
+| `Type` | `IOU` or `POU` |
+| `HIFLD_ID` | Homeland Infrastructure Foundation-Level Data ID |
+| `Sales_GWh_YYYY` | Annual electricity sales by year (1990-2025) |
+| Geometry | `esriGeometryPolygon` (MultiPolygon in GeoJSON) |
+
+### Why this matters
+
+This is the missing piece for building a practical Flex Alert region mapping:
+
+1. **Union PG&E polygon → Northern CA Region**
+2. **Union SCE + SDG&E polygons → Southern CA Region**
+3. **Point-in-polygon test** against a given lat/lon tells you the IOU, which maps to the Flex Alert region
+
+### POUs are NOT exempt from Flex Alerts
+
+POUs like CPAU (City of Palo Alto Utilities), SMUD, LADWP, and Silicon Valley Power are physically interconnected with the CAISO-managed grid. They typically:
+- Buy wholesale power through CAISO markets
+- Use IOU transmission infrastructure for delivery (e.g., CPAU uses PG&E transmission)
+- Are subject to the same system-wide supply/demand constraints that trigger Flex Alerts
+
+When CAISO calls a Flex Alert because the grid is stressed, **reducing demand in POU territories helps the entire system** just as much as reducing demand in IOU territories. The electrons don't care who the retail provider is.
+
+The IOU/POU distinction is relevant for determining *which Flex Alert region* a location falls in (since regions roughly map to IOU territories), but it does NOT determine whether a Flex Alert is relevant to a given consumer. A consumer in CPAU territory is geographically within PG&E's footprint and should respond to "Northern CA Region" alerts.
+
+The POU boundary data is still useful for identifying locations that are *geographically within* an IOU region but served by a different retail provider — important context, but not a reason to ignore Flex Alerts.
+
+### What's still needed
+
+- [ ] CAISO Balancing Authority Area boundary as GIS data (to intersect with IOU territories and confirm which areas are actually in the CAISO BAA)
+- [ ] Clarification on Bear Valley, Liberty, PacifiCorp — are these in the CAISO BAA? Which Flex Alert region?
+- [ ] VEA (Valley Electric Association) boundary — not in this dataset (it's in Nevada)
+
+## Other potential GIS data sources
 
 ### CAISO BAA boundary
 - [ ] Does CAISO publish a GIS boundary for their balancing authority area?
 - [ ] FERC/NERC BAA maps — are these available as downloadable GIS data?
 - [ ] EIA has utility service territory data: https://www.eia.gov/maps/layer_info-m.php — includes balancing authority boundaries
 
-### IOU service territory boundaries (GIS format)
-- [ ] CPUC may have regulatory service territory boundaries in GIS format
+### Additional sources
+- [ ] HIFLD (Homeland Infrastructure Foundation-Level Data) — HIFLD_ID field in CEC data suggests cross-reference is possible
 - [ ] EIA Form 861 data includes utility service territories
-- [ ] Individual IOUs may publish their own service territory GIS data
-- [ ] HIFLD (Homeland Infrastructure Foundation-Level Data) has electric utility boundaries
-
-### California-specific
-- [ ] CEC may have unpublished GIS layers behind the PDF map — worth asking
-- [ ] CalEnviroScreen and other CA state tools may embed utility territory data
-- [ ] CA Public Utilities Commission GIS data
+- [ ] The CEC also has `ElectricLoadServingEntities_Other` and `California_Electricity_Demand_Forecast_Zones` feature services worth investigating
+- [ ] `Balancing Authority Areas` — listed as PDF in CEC data, but may have a companion feature layer
 
 ## Ideas for a practical mapping
 
