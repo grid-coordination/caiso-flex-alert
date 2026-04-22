@@ -209,7 +209,8 @@ Flex Alerts are one level in a broader escalation hierarchy. From the [CAISO Eme
 | **EEA Watch** | Early warning that energy deficiencies may occur |
 | **EEA 1** | All resources in use or committed; energy deficiencies expected |
 | **EEA 2** | ISO requests emergency energy from all resources; emergency demand response activated |
-| **EEA 3** | ISO unable to meet minimum contingency reserve requirements; controlled power curtailments imminent or in progress |
+| **EEA 3 — Preparing** | ISO unable to meet minimum reserve requirements; utilities alerted to prepare for rotating outages |
+| **EEA 3 — Ordering** | ISO has ordered utilities to begin rotating power outages to protect grid reliability |
 
 The v2 endpoint documented above only covers **Flex Alerts**. It is unknown whether the EEA alerts are available through a similar v2 endpoint.
 
