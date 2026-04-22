@@ -6,13 +6,13 @@
 
 ---
 
-California's grid operator (CAISO) issues Flex Alerts to call for voluntary electricity conservation during grid emergencies. These alerts are communicated effectively to humans — via text, email, social media, and the [flexalert.org](https://www.flexalert.org) website.
+California's grid operator (CAISO) issues Flex Alerts to call for voluntary electricity conservation during grid emergencies. These alerts are communicated effectively to humans — via text, email, social media, the [flexalert.org](https://www.flexalert.org) website, and the [ISO Today](https://www.caiso.com/iso-today) smartphone app.
 
 However, there is no reliable way for **machines** to receive and act on these alerts.
 
 This matters because home and building automation systems — smart thermostats, EV chargers, battery storage, water heaters — can respond to grid stress automatically and instantly, without requiring a human to read a text message and manually adjust settings. The technology exists today. What's missing is a dependable data feed.
 
-**The problem:** CAISO provides a [single JSON endpoint](https://github.com/grid-coordination/caiso-flex-alert#active-endpoint-todays-outlook-api-v2) for Flex Alert status. It was designed to power a website dashboard, not to serve as infrastructure for automated demand response. Key issues:
+**The problem:** CAISO provides a [single data feed](https://github.com/grid-coordination/caiso-flex-alert#active-endpoint-todays-outlook-api-v2) for Flex Alert status, but it was designed to power a website dashboard, not to serve as infrastructure for automated demand response. Key issues:
 
 - **Regions are undefined.** The API says "Northern CA Region" but CAISO has [no geographic boundary data](https://github.com/grid-coordination/caiso-flex-alert#regions-are-undefined-and-unmappable) for what that means. There is no way for a device to determine whether an alert applies to its location.
 - **The format is fragile.** Timestamps, region names, and field formats have [changed without notice](https://github.com/grid-coordination/caiso-flex-alert#timestamp-format-instability). There is no versioning, no schema, and no deprecation policy.
