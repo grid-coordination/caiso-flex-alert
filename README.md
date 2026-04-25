@@ -1,5 +1,13 @@
 # CAISO Flex Alert API Documentation
 
+**Version 0.3.0** — April 24, 2026
+
+| Version | Date | Changes |
+|---|---|---|
+| 0.3.0 | 2026-04-24 | Add scaling/transport architecture section (CDN caching vs. push protocols) |
+| 0.2.0 | 2026-04-21 | Add machine-to-machine API proposal with region registry, alert types, and schema discovery |
+| 0.1.0 | 2026-04-21 | Initial documentation of current API, parsing guide, limitations, and critique |
+
 ## Overview
 
 The [California Independent System Operator (CAISO)](https://www.caiso.com) issues **[Flex Alerts](https://www.flexalert.org)** — voluntary conservation calls asking electricity consumers to reduce usage during periods when the grid is under stress (typically hot summer afternoons/evenings when demand peaks and supply is tight). See [What is a Flex Alert?](https://www.flexalert.org/what-is-flex-alert) for background.
@@ -532,3 +540,123 @@ With these changes, a home automation system could:
 4. **For analytics:** Query the history endpoint to analyze alert frequency, duration trends, and regional patterns over time.
 
 None of this is possible with the current API, where a machine cannot reliably determine whether "Northern CA Region" includes a given street address, and where the payload format can change without warning or detection.
+
+### Scaling to Millions of Devices: Caching, Not Push
+
+If Flex Alerts are to reach millions of smart thermostats, battery controllers, and EV chargers, the transport architecture matters. The instinct is to reach for a push protocol — MQTT or WebSockets — so that devices learn about alerts instantly without hammering the server. But for this specific use case, push protocols are the wrong answer. The right answer is HTTP done correctly.
+
+#### Why push protocols don't fit
+
+**MQTT** is excellent for IoT command-and-control: a thermostat reporting temperature every 30 seconds, a utility sending a setpoint change to a specific device. But it requires CAISO to operate a broker cluster (or contract one) capable of maintaining persistent TCP connections with millions of subscribers, handling authentication, managing topic ACLs, and monitoring session state. That is a significant new operational burden for an organization whose job is to run a power grid, not a messaging platform.
+
+**WebSockets** are even worse from CAISO's perspective. Each connected device holds an open TCP connection to the server. A million devices means a million concurrent connections — each consuming memory, file descriptors, and load-balancer state. The server becomes stateful: it must track which connections are alive, handle reconnection storms after network blips, and push updates to each socket individually (or manage subscription groups). This is the most complex and resource-intensive option, not the simplest.
+
+Both approaches invert the scaling burden: instead of clients absorbing the cost of checking for updates, CAISO absorbs the cost of tracking and notifying every client. For a private utility communicating with its own fleet of devices, that tradeoff might be acceptable. For a public API serving an unbounded number of third-party devices, it is not.
+
+#### The nature of the data favors HTTP
+
+Flex Alerts have three properties that make them ideal for cached HTTP:
+
+1. **Rare.** Flex Alerts are issued a handful of times per year. The vast majority of API responses will be identical to the previous one — "no alert active."
+2. **Public.** The data is not personalized. Every client requesting the same endpoint gets the same response.
+3. **Latency-tolerant.** A conservation request does not need sub-second delivery. Learning about a Flex Alert 60 seconds after it is issued — rather than instantly — has no meaningful impact on the desired behavior (pre-cooling a home, deferring an EV charge session).
+
+These three properties are precisely the conditions under which HTTP caching is most effective.
+
+#### What CAISO needs to do
+
+Add standard HTTP cache headers to the alert endpoint response. This is a configuration change, not a new system:
+
+```
+Cache-Control: public, max-age=60
+ETag: "a1b2c3d4"
+Last-Modified: Thu, 05 Sep 2024 23:05:29 GMT
+Vary: Accept
+```
+
+| Header | Purpose |
+|---|---|
+| `Cache-Control: public, max-age=60` | Any intermediary (CDN, ISP, corporate proxy) may cache this response for 60 seconds |
+| `ETag` | Opaque version identifier; enables conditional requests |
+| `Last-Modified` | Timestamp of last data change; enables conditional requests |
+| `Vary: Accept` | Cache JSON and XML responses separately |
+
+With these headers in place, CAISO places the endpoint behind a CDN (Cloudflare, Fastly, AWS CloudFront, or Akamai — all are commodity services). The CDN does the rest.
+
+#### How it scales
+
+```
+┌──────────────┐
+│  Smart       │──┐
+│  Thermostat  │  │
+├──────────────┤  │    ┌────────────────┐       ┌──────────────────┐
+│  EV Charger  │──┼───▶│  CDN Edge Node │──────▶│  CAISO Origin    │
+├──────────────┤  │    │  (one per PoP) │ max 1 │  (single server) │
+│  Battery     │──┤    └────────────────┘ req/  └──────────────────┘
+│  Controller  │  │     serves millions   min
+├──────────────┤  │     from cache         per
+│  HEMS / BMS  │──┘                        PoP
+└──────────────┘
+  millions of
+  devices poll
+  every 60-300s
+```
+
+1. **Normal operation (no alert).** Millions of devices poll the CDN edge every 60–300 seconds. The CDN serves a cached "no alert" response. CAISO's origin server sees at most one request per minute per CDN point-of-presence — perhaps 50–200 requests per minute worldwide. The origin could be a single server.
+
+2. **Alert issued.** CAISO updates the endpoint. Within 60 seconds (the `max-age` window), CDN caches expire and edge nodes fetch the new response from the origin. All subsequent client requests receive the alert. No fanout infrastructure required — the CDN's existing global edge network is the fanout.
+
+3. **Conditional requests.** Devices that poll more frequently than the cache window can send conditional requests using `If-None-Match` (with the ETag) or `If-Modified-Since`. When nothing has changed, the CDN returns a `304 Not Modified` with no body — minimal bandwidth even on constrained IoT networks.
+
+```bash
+# First request — full response
+curl -s -D- 'https://api.caiso.com/v3/alerts' \
+  | head -5
+# HTTP/2 200
+# cache-control: public, max-age=60
+# etag: "a1b2c3d4"
+# content-length: 247
+
+# Subsequent request — conditional, cache hit
+curl -s -D- -H 'If-None-Match: "a1b2c3d4"' \
+  'https://api.caiso.com/v3/alerts' \
+  | head -3
+# HTTP/2 304 Not Modified
+# etag: "a1b2c3d4"
+# content-length: 0
+```
+
+#### Comparison
+
+| | Polling (current) | MQTT | WebSockets | HTTP + CDN (proposed) |
+|---|---|---|---|---|
+| **Load on CAISO** | Millions of req/min (no caching) | Millions of persistent connections | Millions of persistent connections | ~100 req/min (CDN absorbs rest) |
+| **New infrastructure** | None | Broker cluster, auth, monitoring | WS gateway, session management | CDN account (commodity) |
+| **CAISO code changes** | None | New pub/sub system | New WS server | Add ~4 HTTP headers |
+| **Alert latency** | Poll interval (60–300s) | Sub-second | Sub-second | ≤ cache TTL (60s) |
+| **Scales to** | Thousands (before origin stress) | Millions (with broker investment) | Millions (with significant infra) | Billions (CDN is the limit) |
+| **Connection state** | Stateless | Stateful (per-device) | Stateful (per-device) | Stateless |
+| **Client complexity** | HTTP GET | MQTT client library, reconnect logic | WS client library, reconnect logic | HTTP GET (same as current) |
+| **Works through firewalls** | Yes | Often blocked (port 1883/8883) | Usually (port 443) | Yes |
+| **Offline/batch clients** | Natural fit | Poor fit (requires connection) | Poor fit (requires connection) | Natural fit |
+
+The "alert latency" row is the only one where push protocols win — and the difference (sub-second vs. 60 seconds) is irrelevant for a conservation request that applies over a multi-hour window.
+
+#### For intermediaries: webhook notification
+
+A small number of intermediary platforms — utility demand-response systems, home automation cloud services, energy management aggregators — may aggregate alerts on behalf of thousands of downstream devices. These platforms can afford to poll every 30–60 seconds, but if CAISO wants to support instant push notification to this tier, the simplest approach is a lightweight webhook:
+
+```
+POST /api/EmergencyNotices/v3/webhooks
+Content-Type: application/json
+
+{
+  "callbackUrl": "https://example.com/caiso-alerts",
+  "events": ["alert.created", "alert.modified", "alert.cancelled"],
+  "regions": ["NORTHERN_CA"]
+}
+```
+
+This limits the subscriber count to hundreds (registered platforms), not millions (individual devices), keeping CAISO's operational burden minimal. The intermediary platforms then distribute alerts to their own device fleets using whatever transport suits their architecture — MQTT, WebSockets, push notifications, or their own CDN-cached endpoints.
+
+This layered approach keeps CAISO's role simple: publish a cacheable HTTP resource, and optionally notify a small set of registered intermediaries. The fan-out to millions of end devices is handled by the intermediaries and by CDN infrastructure — not by CAISO.
