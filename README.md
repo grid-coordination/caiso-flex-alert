@@ -1,9 +1,10 @@
 # CAISO Flex Alert API Documentation
 
-**Version 0.3.0** — April 24, 2026
+**Version 0.4.0** — April 25, 2026
 
 | Version | Date | Changes |
 |---|---|---|
+| 0.4.0 | 2026-04-25 | Add section on appliance integration via OpenADR 3 price servers |
 | 0.3.0 | 2026-04-24 | Add scaling/transport architecture section (CDN caching vs. push protocols) |
 | 0.2.0 | 2026-04-21 | Add machine-to-machine API proposal with region registry, alert types, and schema discovery |
 | 0.1.0 | 2026-04-21 | Initial documentation of current API, parsing guide, limitations, and critique |
@@ -586,27 +587,29 @@ With these headers in place, CAISO places the endpoint behind a CDN (Cloudflare,
 #### How it scales
 
 ```
-┌──────────────┐
-│  Smart       │──┐
-│  Thermostat  │  │
-├──────────────┤  │    ┌────────────────┐       ┌──────────────────┐
-│  EV Charger  │──┼───▶│  CDN Edge Node │──────▶│  CAISO Origin    │
-├──────────────┤  │    │  (one per PoP) │ max 1 │  (single server) │
-│  Battery     │──┤    └────────────────┘ req/  └──────────────────┘
-│  Controller  │  │     serves millions   min
-├──────────────┤  │     from cache         per
-│  HEMS / BMS  │──┘                        PoP
-└──────────────┘
-  millions of
-  devices poll
-  every 60-300s
+┌──────────────────┐
+│  Price servers   │──┐
+│  (OpenADR 3)     │  │
+├──────────────────┤  │    ┌────────────────┐       ┌──────────────────┐
+│  DR aggregators  │──┼───▶│  CDN Edge Node │──────▶│  CAISO Origin    │
+├──────────────────┤  │    │  (one per PoP) │ max 1 │  (single server) │
+│  Utility DRMS    │──┤    └────────────────┘ req/  └──────────────────┘
+│  systems         │  │     serves consumers  min
+├──────────────────┤  │     from cache         per
+│  Home auto cloud │──┘                        PoP
+└──────────────────┘
+  API consumers
+  poll every
+  60–300s
 ```
 
-1. **Normal operation (no alert).** Millions of devices poll the CDN edge every 60–300 seconds. The CDN serves a cached "no alert" response. CAISO's origin server sees at most one request per minute per CDN point-of-presence — perhaps 50–200 requests per minute worldwide. The origin could be a single server.
+The far-left column is deliberately not appliances. Individual thermostats, EV chargers, and batteries do not consume the CAISO API directly — that argument is developed in the [OpenADR 3 last-mile section](#how-appliances-consume-the-signal-openadr-3-at-the-last-mile) below. The consumers of the cached HTTP feed are intermediary platforms that translate it into national-protocol events (typically OpenADR 3) for the device fleet they serve.
+
+1. **Normal operation (no alert).** API consumers — price servers, demand-response aggregators, utility DRMS, home-automation cloud services — poll the CDN edge every 60–300 seconds. The CDN serves a cached "no alert" response. CAISO's origin server sees at most one request per minute per CDN point-of-presence — perhaps 50–200 requests per minute worldwide. The origin could be a single server.
 
 2. **Alert issued.** CAISO updates the endpoint. Within 60 seconds (the `max-age` window), CDN caches expire and edge nodes fetch the new response from the origin. All subsequent client requests receive the alert. No fanout infrastructure required — the CDN's existing global edge network is the fanout.
 
-3. **Conditional requests.** Devices that poll more frequently than the cache window can send conditional requests using `If-None-Match` (with the ETag) or `If-Modified-Since`. When nothing has changed, the CDN returns a `304 Not Modified` with no body — minimal bandwidth even on constrained IoT networks.
+3. **Conditional requests.** Consumers that poll more frequently than the cache window can send conditional requests using `If-None-Match` (with the ETag) or `If-Modified-Since`. When nothing has changed, the CDN returns a `304 Not Modified` with no body — minimal bandwidth on every poll cycle.
 
 ```bash
 # First request — full response
@@ -660,3 +663,70 @@ Content-Type: application/json
 This limits the subscriber count to hundreds (registered platforms), not millions (individual devices), keeping CAISO's operational burden minimal. The intermediary platforms then distribute alerts to their own device fleets using whatever transport suits their architecture — MQTT, WebSockets, push notifications, or their own CDN-cached endpoints.
 
 This layered approach keeps CAISO's role simple: publish a cacheable HTTP resource, and optionally notify a small set of registered intermediaries. The fan-out to millions of end devices is handled by the intermediaries and by CDN infrastructure — not by CAISO.
+
+### How Appliances Consume the Signal: OpenADR 3 at the Last Mile
+
+The previous section establishes that CAISO should publish a cacheable HTTP feed and let intermediaries fan it out. That leaves an open question: **what protocol do appliances actually speak?** It is not the CAISO Flex Alert API, and it should not be.
+
+#### Flex Alerts are local; appliances are national
+
+Flex Alerts are a CAISO/California construct. Other ISOs and balancing authorities — ERCOT, PJM, MISO, NYISO, ISO-NE, SPP, BPA, and dozens of smaller utilities — each have their own grid-stress signaling: conservation alerts, demand-response events, critical-peak pricing, emergency curtailment. The names, severity tiers, geographic scopes, and communication channels are all different. None of them issues "Flex Alerts."
+
+A smart thermostat, EV charger, heat-pump water heater, or home battery is sold as a single SKU across the country. It is not commercially viable for an OEM to ship firmware that integrates directly with the CAISO Flex Alert API — doing so would force them to also integrate with every other ISO's bespoke API, track every endpoint change, and maintain a matrix of region-specific code paths in every device. This is the same reason TVs do not ship with hardcoded knowledge of every regional broadcaster: they implement standard signal formats, and the regional sources adapt to those formats.
+
+A central tenet of the [Grid Coordination](https://grid-coordination.energy) initiative is that this last-mile integration must use **standard protocols** — not bespoke APIs per ISO. The current best choice is [OpenADR 3](https://www.openadr.org/), which is in active deployment and standardized through the OpenADR Alliance and (in profile form) IEC 62746-10-1.
+
+#### The right architecture: ISO API → price server (VTN) → appliance (VEN)
+
+The role of translating a region-specific ISO signal into a standard protocol belongs to an intermediary — what we call a **price server**, which acts as an OpenADR 3 **Virtual Top Node (VTN)**. Appliances are OpenADR 3 **Virtual End Nodes (VENs)** that subscribe to programs and events from one or more VTNs.
+
+```
+┌─────────────────┐                ┌──────────────────────┐                ┌─────────────────┐
+│  CAISO          │                │  Price Server        │                │  Appliance      │
+│  Flex Alert API │ ──── HTTP ───▶ │  (OpenADR 3 VTN)     │ ── OpenADR 3 ─▶│  (OpenADR 3 VEN)│
+│  (CDN-cached)   │  poll/304      │                      │   HTTPS / MQTT │  thermostat,    │
+│                 │                │  • CAISO Flex Alert  │   WebSockets   │  EV charger,    │
+└─────────────────┘                │  • CAISO EEA tiers   │                │  battery, HEMS  │
+                                   │  • GridX prices      │                └─────────────────┘
+┌─────────────────┐                │  • SGIP MOER (GHG)   │
+│  Other ISO      │ ──── HTTP ───▶ │  • ... other inputs  │
+│  signals        │                │                      │
+└─────────────────┘                │  Republishes all as  │
+                                   │  OpenADR 3 programs  │
+                                   │  & events            │
+                                   └──────────────────────┘
+```
+
+In this architecture:
+
+1. **CAISO** publishes one cacheable HTTP feed (the proposal in the prior section). It does not need to know about thermostats.
+2. **The price server** ingests the CAISO feed (and feeds from other ISOs and data sources), normalizes them, and republishes them as OpenADR 3 programs and events. The CAISO-specific knowledge — region names, alert-type semantics, timestamp quirks — is encapsulated here, in one place, in software that can be updated centrally when CAISO changes anything.
+3. **The appliance** speaks only OpenADR 3. Its firmware does not contain a single line of CAISO-specific code. To operate in PJM territory, it subscribes to a PJM-region price server. To operate in CAISO territory, it subscribes to a CAISO-region price server. The integration surface is one protocol.
+
+This is precisely the model implemented by the **Grid Coordination Price Server** — an OpenADR 3 VTN that today ingests CAISO Day-Ahead Market prices (via [GridX](https://www.gridx.com/)) and California GHG emissions intensity (via [SGIP Signal](https://sgipsignal.com/)) and republishes them as ~500 OpenADR 3 programs covering PG&E and SCE territories. Adding CAISO Flex Alerts as an additional program (or as event payloads on existing programs) is a natural extension. See the [Price Server User Guide](https://github.com/grid-coordination/price-server-user-guide) for the operator-facing view of this architecture.
+
+#### Push protocols belong here, between VTN and VEN
+
+The earlier section argued against CAISO operating MQTT brokers or WebSocket gateways for millions of devices. That argument applies to CAISO. It does **not** apply to a price server, which sits in a fundamentally different position:
+
+| | CAISO origin | Price server (VTN) |
+|---|---|---|
+| **Subscribers** | Unbounded, anonymous public | A defined VEN fleet, sized to the operator's program |
+| **Operational mission** | Run the grid | Run a messaging service |
+| **Identity / auth** | None (public) | Operator's choice — open access, mTLS, OAuth, or pre-shared credentials per VEN |
+| **Data scope** | One ISO's signals | Any/all signals relevant to subscribed VENs |
+| **Push protocols** | Wrong layer | Right layer |
+
+OpenADR 3 already accommodates push at this layer. The Grid Coordination Price Server publishes MQTT notifications on every event CREATE/UPDATE to `mqtt.grid-coordination.energy`; VENs that want sub-second delivery subscribe over MQTT, while VENs that prefer polling continue to use HTTPS. WebSockets are an equally valid transport for the same content. The choice is the price-server operator's, not CAISO's, and it can be made on the basis of the VEN fleet's actual constraints.
+
+This is the right place for stateful, per-device messaging: a price server has a defined subscriber base, an explicit operational mandate to deliver messages, and the freedom to choose whatever transport — and whatever access policy, from open to fully authenticated — its program calls for. The CAISO origin does not, should not, and need not.
+
+#### What this means for CAISO
+
+Taken together, the proposals in this document constitute a **complete end-to-end solution** for getting CAISO Flex Alerts to the devices that should respond to them. The work is divided clearly across three tiers, and each tier's job is well-scoped:
+
+1. **CAISO** implements the straightforward Flex Alert API enhancements proposed earlier — a versioned, cacheable, schema-discoverable HTTP feed with a region registry, alert-type registry, and lifecycle-aware payloads, served behind a CDN with proper cache headers. This is real work, but it is in CAISO's wheelhouse: publishing structured data about its own balancing authority. CAISO does not need to design an appliance-facing API, operate a messaging broker, or maintain per-device state.
+2. **Price servers** (and other OpenADR 3 VTN operators — utilities, demand-response aggregators, home-automation platforms) consume CAISO's HTTP feed and republish it as OpenADR 3 programs and events, alongside other regional signals (prices, GHG intensity, other ISO alerts). They handle authentication, push transports (MQTT, WebSockets), and the per-VEN delivery semantics their device fleets require.
+3. **Appliances** speak only the open standard protocol — OpenADR 3 — and remain agnostic to which ISO or balancing authority they operate under. The same firmware works in CAISO, ERCOT, PJM, NYISO, or anywhere else a compatible VTN is available.
+
+The result is a clean separation of concerns: CAISO publishes high-quality regional data using ordinary web infrastructure, intermediaries translate to a national standard, and appliances integrate against one protocol for the entire country. Each tier does work that is appropriate to its role, no tier is asked to take on responsibilities outside its competence, and the whole system relies on open and standard protocols at every interface.
